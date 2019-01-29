@@ -1,0 +1,204 @@
+# Initial Setup
+#
+# NOTE: SETUP FOR DEMONSTRATION PURPOSES ONLY, NOT FOR PRODUCTION USE
+#
+# ELASTICSEARCH
+#
+# 1. Download Elasticsearch 6.6 (and unzip)
+# 2. Start two instances of Elasticsearch, each with a different cluster name, port, and data path:
+#    ./bin/elasticsearch -E cluster.name=cluster1 -E http.port=9200 -E path.data=./cluster1-data
+#    ./bin/elasticsearch -E cluster.name=cluster2 -E http.port=9201 -E path.data=./cluster2-data
+# 3. Ensure they are running correctly
+#    Visit http://localhost:9200/
+#    Visit http://localhost:9201/
+#
+# KIBANA
+#
+# 1. Download Kibana 6.6 (and unzip)
+# 2. Start two instances of Kibana, referencing each elasticsearch cluster and listening on a different port:
+#    ./bin/kibana -e http://localhost:9200 -p 5601
+#    ./bin/kibana -e http://localhost:9201 -p 5602
+# 3. Ensure they are running correctly
+#    Visit http://localhost:5601/
+#    Visit http://localhost:5602/
+#
+# RECAP
+#
+# cluster1
+# - ELASTICSEARCH http://localhost:9200/
+# - KIBANA http://localhost:5601/
+#
+# cluster2
+# - ELASTICSEARCH http://localhost:9201/
+# - KIBANA http://localhost:5602/
+#
+# +------------------+           +------------------+
+# |                  |           |                  |
+# | cluster2         |           | cluster1         |
+# |                  +---------> |                  |
+# | ES port 9201     |           | ES port 9200     |
+# | Kibana port 5602 |           | Kibana port 5601 |
+# |                  |           |                  |
+# +------------------+           +------------------+
+#
+
+#
+# 1. Let's first access cluster1, and create a new index we will replicate to cluster2
+#
+#    It's important to note the "soft_deletes" index setting
+
+PUT /server-metrics
+{
+  "settings" : {
+    "index" : {
+      "number_of_shards" : 1,
+      "number_of_replicas" : 0,
+      "soft_deletes" : {
+        "enabled" : true,
+        "retention" : {
+          "operations" : 1024
+        }
+      }
+    }
+  },
+  "mappings" : {
+    "metric" : {
+      "properties" : {
+        "@timestamp" : {
+          "type" : "date"
+        },
+        "accept" : {
+          "type" : "long"
+        },
+        "deny" : {
+          "type" : "long"
+        },
+        "host" : {
+          "type" : "keyword"
+        },
+        "response" : {
+          "type" : "float"
+        },
+        "service" : {
+          "type" : "keyword"
+        },
+        "total" : {
+          "type" : "long"
+        }
+      }
+    }
+  }
+}
+
+#
+# We're done with cluster1, all of our work will now occur on cluster2
+#
+
+#
+# 2. Let's make sure cluster2 knows where cluster1 is
+#
+#    We started Elasticsearch on port 9200 (for cluster1)
+#    port 9300 (usually 100 higher) ES <-> ES communication
+#    Port 9300 should be used when defining our connection to cluster1
+#
+
+PUT /_cluster/settings
+{
+  "persistent" : {
+    "cluster" : {
+      "remote" : {
+        "leader" : {
+          "seeds" : [
+            "127.0.0.1:9300"
+          ]
+        }
+      }
+    }
+  }
+}
+
+#
+# Verify the connection exists
+#
+
+GET /_remote/info
+
+#
+# 3. Now, let's follow our server-metrics index from cluster1
+#
+
+PUT /server-metrics-copy/_ccr/follow
+{
+  "remote_cluster" : "leader",
+  "leader_index" : "server-metrics"
+}
+
+#
+# 4. We can check if any documents have started appearing
+#
+
+GET /server-metrics/_search
+
+#
+# 4. How about if we need to use an auto-follow pattern
+#
+#    We'll use this command in our next example below
+#
+
+PUT /_ccr/auto_follow/beats
+{
+  "remote_cluster" : "leader",
+  "leader_index_patterns" :
+  [
+    "metricbeat-*",
+    "packetbeat-*"
+  ],
+  "follow_index_pattern" : "{{leader_index}}-copy"
+}
+
+# Now let's revisit these commands within the Kibana UI
+
+#
+# Replicate Metricbeat metrics across our Elasticsearch clusters
+#
+# 1. Download Metricbeat (and unzip)
+
+#
+# 2. Configure Metricbeat to use soft_deletes by modifying metricbeat.yml
+# https://www.elastic.co/guide/en/elastic-stack-overview/6.6/ccr-requirements.html#ccr-overview-beats
+#
+# setup.template.overwrite: true
+# setup.template.settings:
+#   index.soft_deletes.enabled: true
+#   index.soft_deletes.retention.operations: 1024
+#
+
+#
+# 3. Start following Metricbeat indices from our follower
+#
+PUT /_ccr/auto_follow/beats
+{
+  "remote_cluster" : "leader",
+  "leader_index_patterns" :
+  [
+    "metricbeat-*",
+    "packetbeat-*"
+  ],
+  "follow_index_pattern" : "{{leader_index}}-copy"
+}
+
+#
+# 4. Start Metricbeat, and write to cluster1
+#
+
+# Ensure documents are being populated
+
+GET _cat/indices
+GET metricbeat*/_search
+
+#
+# 5. Now let's go back to our following cluster and see the writes coming in
+#
+
+GET _cat/indices
+GET metricbeat*/_search
