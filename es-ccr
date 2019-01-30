@@ -34,8 +34,8 @@
 #
 # +------------------+           +------------------+
 # |                  |           |                  |
-# | cluster2         |           | cluster1         |
-# |                  +---------> |                  |
+# | cluster2 (DR)    |           | cluster1 (PROD)  |
+# |                  + <---------|                  |
 # | ES port 9201     |           | ES port 9200     |
 # | Kibana port 5602 |           | Kibana port 5601 |
 # |                  |           |                  |
@@ -46,8 +46,17 @@
 # 1. Let's first access cluster1, and create a new index we will replicate to cluster2
 #
 #    It's important to note the "soft_deletes" index setting
+#
+#    soft_deletes: A soft delete occurs whenever an existing document is deleted or updated.
+#    By retaining these soft deletes up to configurable limits, the history of operations
+#    can be retained on the leader shards and made available to the follower shard
+#    tasks as it replays the history of operations.
 
-PUT /server-metrics
+# Setup: delete products index in case it exists
+DELETE products
+
+# Create product index
+PUT /products
 {
   "settings" : {
     "index" : {
@@ -62,28 +71,10 @@ PUT /server-metrics
     }
   },
   "mappings" : {
-    "metric" : {
+    "_doc" : {
       "properties" : {
-        "@timestamp" : {
-          "type" : "date"
-        },
-        "accept" : {
-          "type" : "long"
-        },
-        "deny" : {
-          "type" : "long"
-        },
-        "host" : {
+        "name" : {
           "type" : "keyword"
-        },
-        "response" : {
-          "type" : "float"
-        },
-        "service" : {
-          "type" : "keyword"
-        },
-        "total" : {
-          "type" : "long"
         }
       }
     }
@@ -91,8 +82,7 @@ PUT /server-metrics
 }
 
 #
-# We're done with cluster1, all of our work will now occur on cluster2
-#
+# We're done with setting up an index on cluster1
 
 #
 # 2. Let's make sure cluster2 knows where cluster1 is
@@ -107,7 +97,7 @@ PUT /_cluster/settings
   "persistent" : {
     "cluster" : {
       "remote" : {
-        "leader" : {
+        "cluster1" : {
           "seeds" : [
             "127.0.0.1:9300"
           ]
@@ -124,20 +114,29 @@ PUT /_cluster/settings
 GET /_remote/info
 
 #
-# 3. Now, let's follow our server-metrics index from cluster1
+# 3. Now, let's follow our products index from cluster1
 #
 
-PUT /server-metrics-copy/_ccr/follow
+PUT /products-copy/_ccr/follow
 {
-  "remote_cluster" : "leader",
-  "leader_index" : "server-metrics"
+  "remote_cluster" : "cluster1",
+  "leader_index" : "products"
 }
 
 #
 # 4. We can check if any documents have started appearing
 #
 
-GET /server-metrics/_search
+GET /products-copy/_search
+
+#
+# Nothing yet, let's add a few documents on the leader (cluster1)
+#
+
+POST /products/_doc
+{
+  "name" : "My cool new product"
+}
 
 #
 # 4. How about if we need to use an auto-follow pattern
@@ -156,7 +155,7 @@ PUT /_ccr/auto_follow/beats
   "follow_index_pattern" : "{{leader_index}}-copy"
 }
 
-# Now let's revisit these commands within the Kibana UI
+# Now let's revisit the commands above within the Kibana UI
 
 #
 # Replicate Metricbeat metrics across our Elasticsearch clusters
@@ -172,6 +171,9 @@ PUT /_ccr/auto_follow/beats
 #   index.soft_deletes.enabled: true
 #   index.soft_deletes.retention.operations: 1024
 #
+
+# Setup
+DELETE metricbeat*
 
 #
 # 3. Start following Metricbeat indices from our follower
