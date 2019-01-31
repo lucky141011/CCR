@@ -161,6 +161,8 @@ PUT /_ccr/auto_follow/beats
 # Replicate Metricbeat metrics across our Elasticsearch clusters
 #
 # 1. Download Metricbeat (and unzip)
+#
+# https://www.elastic.co/products/beats/metricbeat
 
 #
 # 2. Configure Metricbeat to use soft_deletes by modifying metricbeat.yml
