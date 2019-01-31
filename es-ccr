@@ -146,11 +146,10 @@ POST /products/_doc
 
 PUT /_ccr/auto_follow/beats
 {
-  "remote_cluster" : "leader",
+  "remote_cluster" : "cluster1",
   "leader_index_patterns" :
   [
-    "metricbeat-*",
-    "packetbeat-*"
+    "metricbeat-*"
   ],
   "follow_index_pattern" : "{{leader_index}}-copy"
 }
@@ -182,11 +181,10 @@ DELETE metricbeat*
 #
 PUT /_ccr/auto_follow/beats
 {
-  "remote_cluster" : "leader",
+  "remote_cluster" : "cluster1",
   "leader_index_patterns" :
   [
-    "metricbeat-*",
-    "packetbeat-*"
+    "metricbeat-*"
   ],
   "follow_index_pattern" : "{{leader_index}}-copy"
 }
